@@ -3,8 +3,7 @@
 # GNU General Public License v3.0+ (see LICENSES/GPL-3.0-or-later.txt or https://www.gnu.org/licenses/gpl-3.0.txt)
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from __future__ import (absolute_import, division, print_function)
-__metaclass__ = type
+from __future__ import annotations
 
 DOCUMENTATION = '''
     name: xen_orchestra
@@ -58,6 +57,20 @@ DOCUMENTATION = '''
             description: Use wss when connecting to the Xen Orchestra API
             type: boolean
             default: true
+        use_vm_uuid:
+            description:
+                - Import Xen VMs to inventory using their UUID as the VM entry name.
+                - If set to V(false) use VM name labels instead of UUIDs.
+            type: boolean
+            default: true
+            version_added: 10.4.0
+        use_host_uuid:
+            description:
+                - Import Xen Hosts to inventory using their UUID as the Host entry name.
+                - If set to V(false) use Host name labels instead of UUIDs.
+            type: boolean
+            default: true
+            version_added: 10.4.0
 '''
 
 
@@ -73,6 +86,8 @@ groups:
     kube_nodes: "'kube_node' in tags"
 compose:
     ansible_port: 2222
+use_vm_uuid: false
+use_host_uuid: true
 
 '''
 
@@ -84,6 +99,7 @@ from ansible.errors import AnsibleError
 from ansible.plugins.inventory import BaseInventoryPlugin, Constructable, Cacheable
 
 from ansible_collections.community.general.plugins.module_utils.version import LooseVersion
+from ansible_collections.community.general.plugins.plugin_utils.unsafe import make_unsafe
 
 # 3rd party imports
 try:
@@ -137,7 +153,7 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
 
         sslopt = None if validate_certs else {'cert_reqs': ssl.CERT_NONE}
         self.conn = create_connection(
-            '{0}://{1}/api/'.format(proto, xoa_api_host), sslopt=sslopt)
+            f'{proto}://{xoa_api_host}/api/', sslopt=sslopt)
 
     CALL_TIMEOUT = 100
     """Number of 1/10ths of a second to wait before method call times out."""
@@ -161,8 +177,7 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
                 sleep(0.1)
                 waited += 1
 
-        raise AnsibleError(
-            'Method call {method} timed out after {timeout} seconds.'.format(method=method, timeout=self.CALL_TIMEOUT / 10))
+        raise AnsibleError(f'Method call {method} timed out after {self.CALL_TIMEOUT / 10} seconds.')
 
     def login(self, user, password):
         result = self.call('session.signIn', {
@@ -170,15 +185,13 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
         })
 
         if 'error' in result:
-            raise AnsibleError(
-                'Could not connect: {0}'.format(result['error']))
+            raise AnsibleError(f"Could not connect: {result['error']}")
 
     def get_object(self, name):
         answer = self.call('xo.getAllObjects', {'filter': {'type': name}})
 
         if 'error' in answer:
-            raise AnsibleError(
-                'Could not request: {0}'.format(answer['error']))
+            raise AnsibleError(f"Could not request: {answer['error']}")
 
         return answer['result']
 
@@ -199,10 +212,20 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
         self._set_composite_vars(self.get_option('compose'), variables, name, strict=strict)
 
     def _add_vms(self, vms, hosts, pools):
+        vm_name_list = []
         for uuid, vm in vms.items():
+            if self.vm_entry_name_type == 'name_label':
+                if vm['name_label'] not in vm_name_list:
+                    entry_name = vm['name_label']
+                    vm_name_list.append(vm['name_label'])
+                else:
+                    vm_duplicate_count = vm_name_list.count(vm['name_label'])
+                    entry_name = vm['name_label'] + "_" + str(vm_duplicate_count)
+                    vm_name_list.append(vm['name_label'])
+            else:
+                entry_name = uuid
             group = 'with_ip'
             ip = vm.get('mainIpAddress')
-            entry_name = uuid
             power_state = vm['power_state'].lower()
             pool_name = self._pool_group_name_for_uuid(pools, vm['$poolId'])
             host_name = self._host_group_name_for_uuid(hosts, vm['$container'])
@@ -249,10 +272,20 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
             self._apply_constructable(entry_name, self.inventory.get_host(entry_name).get_vars())
 
     def _add_hosts(self, hosts, pools):
+        host_name_list = []
         for host in hosts.values():
-            entry_name = host['uuid']
-            group_name = 'xo_host_{0}'.format(
-                clean_group_name(host['name_label']))
+            if self.host_entry_name_type == 'name_label':
+                if host['name_label'] not in host_name_list:
+                    entry_name = host['name_label']
+                    host_name_list.append(host['name_label'])
+                else:
+                    host_duplicate_count = host_name_list.count(host['name_label'])
+                    entry_name = host['name_label'] + "_" + str(host_duplicate_count)
+                    host_name_list.append(host['name_label'])
+            else:
+                entry_name = host['uuid']
+
+            group_name = f"xo_host_{clean_group_name(host['name_label'])}"
             pool_name = self._pool_group_name_for_uuid(pools, host['$poolId'])
 
             self.inventory.add_group(group_name)
@@ -275,15 +308,13 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
                 entry_name, 'product_brand', host['productBrand'])
 
         for pool in pools.values():
-            group_name = 'xo_pool_{0}'.format(
-                clean_group_name(pool['name_label']))
+            group_name = f"xo_pool_{clean_group_name(pool['name_label'])}"
 
             self.inventory.add_group(group_name)
 
     def _add_pools(self, pools):
         for pool in pools.values():
-            group_name = 'xo_pool_{0}'.format(
-                clean_group_name(pool['name_label']))
+            group_name = f"xo_pool_{clean_group_name(pool['name_label'])}"
 
             self.inventory.add_group(group_name)
 
@@ -291,16 +322,13 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
     def _pool_group_name_for_uuid(self, pools, pool_uuid):
         for pool in pools:
             if pool == pool_uuid:
-                return 'xo_pool_{0}'.format(
-                    clean_group_name(pools[pool_uuid]['name_label']))
+                return f"xo_pool_{clean_group_name(pools[pool_uuid]['name_label'])}"
 
     # TODO: Refactor
     def _host_group_name_for_uuid(self, hosts, host_uuid):
         for host in hosts:
             if host == host_uuid:
-                return 'xo_host_{0}'.format(
-                    clean_group_name(hosts[host_uuid]['name_label']
-                                     ))
+                return f"xo_host_{clean_group_name(hosts[host_uuid]['name_label'])}"
 
     def _populate(self, objects):
         # Prepare general groups
@@ -346,5 +374,13 @@ class InventoryModule(BaseInventoryPlugin, Constructable, Cacheable):
         if not self.get_option('use_ssl'):
             self.protocol = 'ws'
 
+        self.vm_entry_name_type = 'uuid'
+        if not self.get_option('use_vm_uuid'):
+            self.vm_entry_name_type = 'name_label'
+
+        self.host_entry_name_type = 'uuid'
+        if not self.get_option('use_host_uuid'):
+            self.host_entry_name_type = 'name_label'
+
         objects = self._get_objects()
-        self._populate(objects)
+        self._populate(make_unsafe(objects))
