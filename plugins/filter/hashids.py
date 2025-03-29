@@ -4,8 +4,7 @@
 # GNU General Public License v3.0+ (see LICENSES/GPL-3.0-or-later.txt or https://www.gnu.org/licenses/gpl-3.0.txt)
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-from __future__ import absolute_import, division, print_function
-__metaclass__ = type
+from __future__ import annotations
 
 from ansible.errors import (
     AnsibleError,
@@ -27,7 +26,7 @@ def initialize_hashids(**kwargs):
     if not HAS_HASHIDS:
         raise AnsibleError("The hashids library must be installed in order to use this plugin")
 
-    params = dict((k, v) for k, v in kwargs.items() if v)
+    params = {k: v for k, v in kwargs.items() if v}
 
     try:
         return Hashids(**params)
