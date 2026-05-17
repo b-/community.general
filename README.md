@@ -114,7 +114,7 @@ They also should be subscribed to Ansible's [The Bullhorn newsletter](https://do
 
 ## Publishing New Version
 
-See the [Releasing guidelines](https://github.com/ansible/community-docs/blob/main/releasing_collections.rst) to learn how to release this collection.
+See [Releasing collections with release branches](https://docs.ansible.com/projects/ansible/latest/community/collection_contributors/collection_release_with_branches.html#releasing-collections-with-release-branches) to learn how to release this collection.
 
 ## Release notes
 
